@@ -95,6 +95,14 @@ def main():
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
     scene.cycles.samples = args.samples
+    # Some Linux-distribution Blender builds omit OpenImageDenoiser. Cycles' default
+    # render-layer denoising then causes rendering to fail before image output.
+    # Disable it explicitly so previews work even without an OIDN device.
+    for layer in scene.view_layers:
+        if hasattr(layer, "cycles") and hasattr(layer.cycles, "use_denoising"):
+            layer.cycles.use_denoising = False
+    if hasattr(scene.cycles, "use_denoising"):
+        scene.cycles.use_denoising = False
     scene.render.resolution_x = args.resolution
     scene.render.resolution_y = args.resolution
     scene.render.resolution_percentage = 100
