@@ -1,0 +1,76 @@
+name: Check skill and Blender sample
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Static checks and fake-Blender regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install testing tools
+        run: python -m pip install pytest
+      - name: Compile all Python code
+        run: python -m compileall -q scripts examples tests tools
+      - name: Run offline tests
+        run: python -m pytest -q tests/test_pipeline.py tests/test_packaging.py
+      - name: Build identical .zip and .skill imports
+        run: python tools/package_skill.py --output-dir dist
+      - name: Upload skill bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: manus-skill-archives
+          path: |
+            dist/precision-3d-modeler.zip
+            dist/precision-3d-modeler.skill
+
+  blender:
+    name: Live Blender smoke test (headless CPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Blender from Ubuntu package repository
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender
+          blender --version
+      - name: Build / QA / render / export demo in real Blender
+        run: |
+          python3 scripts/run_pipeline.py \
+            --script examples/modern_chair.py \
+            --outdir ci-output/chair \
+            --name chair \
+            --profile render \
+            --resolution 256 \
+            --samples 8 \
+            --formats glb fbx
+      - name: Assert real output is structurally valid
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.file_integrity import validate_file
+          out = Path('ci-output/chair')
+          assert json.loads((out/'qa.json').read_text())['errors'] == []
+          for extension in ('blend', 'glb', 'fbx'):
+              validate_file(out/('chair.' + extension), extension)
+          for view in ('front','side','hero'):
+              validate_file(out/('preview_' + view + '.png'), 'png', 256)
+          assert json.loads((out/'pipeline_summary.json').read_text())['quality_status'] == 'AUTOMATED_QA_PASSED'
+          PY
+      - name: Save example asset and logs for inspection
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blender-smoke-output
+          path: ci-output/chair/
+          if-no-files-found: warn
